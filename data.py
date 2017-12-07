@@ -4,18 +4,6 @@ import tqdm
 
 import pdb
 
-def batch(it, bsize):
-    j, batch = 0, []
-    for i in it:
-        batch.append(i)
-        j += 1
-        if j == bsize:
-            yield batch
-            j, batch = 0, []
-    else:
-        if batch:
-            yield batch
-
 class vocabulary:
 
     def __len__(self):
@@ -41,7 +29,10 @@ class corpus:
                     yield l
                     pbar.update(1)
 
-    def __init__(self, path, lc=100000):
+    def __len__(self):
+        return self.tokens
+    
+    def __init__(self, path, lc=None):
         self.path = path
         self.linecount = 0
         self.vocabulary = vocabulary()
@@ -66,31 +57,21 @@ class corpus:
 
 class loader(corpus):
 
-    def __init__(self, path, batch_size=8):
-        super(loader, self).__init__(path)
-        self.batch_size = batch_size
-        self.batch_count = self.tokens // self.batch_size
-
     def translate(self, i, o):
         print('i | ', ' '.join([self.vocabulary.itot[x] for x in i.data[:,0]]))
         print('o | ', ' '.join([self.vocabulary.itot[x] for x in o.data[:]]))
 
-    def stream(self, n, evaluation=False, cuda=True):
-        source_length = self.batch_count * self.batch_size
-        source = torch.LongTensor(source_length)
+    def stream(self, n, batch_size, evaluation=False, cuda=True):
+        source = torch.LongTensor(len(self))
         for t, index in enumerate(self):
-            if t < source_length:
-                source[t] = index
-            else:
-                break
-        source = source.narrow(0, 0, self.batch_count * self.batch_size)
-        source = source.view(self.batch_size, -1).t().contiguous()
+            source[t] = index
+        self.batch_count = source.size(0) // batch_size
+        source = source.narrow(0, 0, self.batch_count * batch_size)
+        source = source.view(batch_size, -1).t().contiguous()
         if cuda:
             source = source.cuda()
-
-        for t in range(source_length):
-            seq_len = min(n, source_length - 1 - t)
+        for t in range(0, source.size(0) - 1, n):
+            seq_len = min(n, len(source) - 1 - t)
             i = Variable(source[t:t + seq_len], volatile=evaluation)
             o = Variable(source[t + 1:t + 1 + seq_len].view(-1))
             yield i, o
-
