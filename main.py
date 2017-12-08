@@ -25,7 +25,7 @@ if __name__ == '__main__':
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--batch_size', type=int, default=16)
-    parser.add_argument('--learning_rate', type=int, default=0.01)
+    parser.add_argument('--learning_rate', type=float, default=0.01)
     parser.add_argument('--log_interval', type=int, default=100)
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
@@ -44,14 +44,17 @@ if __name__ == '__main__':
         model.cuda()
 
     if args.train_path:
-        valid = data.loader(args.valid_path) if args.valid_path else None
+        if args.valid_path:
+            valid = data.loader(args.valid_path, vocab=train.vocabulary)
+        else:
+            valid = None
         model.train_model(args.model_path, train, valid, args.epochs, 
                           args.batch_size, args.bptt, args.learning_rate)
         with open(args.model_path, 'rb') as f:
             model = torch.load(f)
 
     if args.test_path:
-        test = data.loader(args.test_path)
+        test = data.loader(args.test_path, vocab=train.vocabulary)
         criterion = nn.CrossEntropyLoss()
         test_loss = model.evaluate(criterion, test, args.bptt, args.batch_size)
         print('=' * 89)

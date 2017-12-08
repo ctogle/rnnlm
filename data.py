@@ -1,5 +1,6 @@
 from torch.autograd import Variable
 import torch
+import collections
 import tqdm
 
 import pdb
@@ -9,9 +10,17 @@ class vocabulary:
     def __len__(self):
         return len(self.itot)
 
-    def __init__(self):
+    def __getitem__(self, token):
+        if token in self.ttoi:
+            return self.ttoi[token]
+        else:
+            return self.unk
+
+    def __init__(self, unk, eos):
         self.ttoi = {}
         self.itot = []
+        self.unk = self.add(unk)
+        self.eos = self.add(eos)
 
     def add(self, token):
         if not token in self.ttoi:
@@ -32,28 +41,42 @@ class corpus:
     def __len__(self):
         return self.tokens
     
-    def __init__(self, path, lc=None):
+    def __init__(self, path, vocab=None, lc=None, min_count=10):
         self.path = path
-        self.linecount = 0
-        self.vocabulary = vocabulary()
-
         self.tokens = 0
-        self.vocabulary.add('<eos>')
-        for line in self.read(lc):
-            for word in line.split():
-                self.tokens += 1
-                self.vocabulary.add(word)
-            else:
-                self.tokens += 1
-            self.linecount += 1
+        self.linecount = 0
+
+        if not vocab is None:
+            for line in self.read(lc):
+                words = line.split()
+                self.tokens += len(words) + 1
+                self.linecount += 1
+            self.vocabulary = vocab
+        else:
+            counter = collections.Counter()
+            for line in self.read(lc):
+                words = line.split()
+                counter.update(words)
+                self.tokens += len(words) + 1
+                self.linecount += 1
+
+            self.vocabulary = vocabulary('<unk>', '<eos>')
+            for token, count in counter.most_common():
+                if count < min_count:
+                    break
+                else:
+                    self.vocabulary.add(token)
+
+        info = (self.path, self.linecount, self.tokens, len(self.vocabulary))
+        print('corpus "%s" | %d lines | %d tokens | %d token vocabulary' % info)
 
     def __iter__(self):
         '''yield the tokens of the corpus with eos tokens between lines'''
         for line in self.read():
             for word in line.split():
-                yield self.vocabulary.ttoi[word]
+                yield self.vocabulary[word]
             else:
-                yield self.vocabulary.ttoi['<eos>']
+                yield self.vocabulary.eos
 
 class loader(corpus):
 
