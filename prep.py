@@ -22,8 +22,14 @@ def xz_stream(path):
                         continue
     yield stream()
 
+alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ,. '
 def clean(line):
-    yield line.upper()
+    line = line.upper().replace(',', ' ,').replace('.', ' .')
+    for c in line:
+        if not c in alphabet:
+            break
+    else:
+        yield line
 
 if __name__ == '__main__':
     raw = sys.argv[1]

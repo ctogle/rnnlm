@@ -1,8 +1,8 @@
 from torch.autograd import Variable
-import torch
-import torch.optim as opt
-import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+import torch.nn as nn
+import torch
 import time
 import math
 
@@ -51,20 +51,22 @@ class lm(nn.Module):
                                dropout=self.p_drop)
         self.decoder = nn.Linear(self.n_hidden, self.n_vocab)
         self.init_weights()
-        self.rnn.flatten_parameters()
+        #self.rnn.flatten_parameters()
         self.epochs = 0
 
     def forward(self, i, hidden):
         embedded = self.drop(self.encoder(i))
+        #embedded = self.encoder(i)
         output, hidden = self.rnn(embedded, hidden)
-        output = self.drop(output)
+        #output = self.drop(output) # WHY WAS THIS HERE??
         osize = output.size(0) * output.size(1)
         decoded = self.decoder(output.view(osize, output.size(2)))
+        #self.rnn.flatten_parameters()
         return decoded.view(osize, decoded.size(1)), hidden
 
-    def epoch(self, optimizer, criterion, loader, 
-              log_interval, bptt, batch_size=16, lr=0.1):
-        super(lm, self).train()
+    def epoch(self, opt, criterion, loader, log_interval, bptt, batch_size=16):
+        self.train()
+        self.epochs += 1
         total_loss = 0
         start_time = time.time()
         ntokens = len(loader.vocabulary)
@@ -73,23 +75,23 @@ class lm(nn.Module):
             #train.translate(i, g)
             o, h = self(i, self.repackage_hidden(h))
             loss = criterion(o.view(-1, ntokens), g)
-            optimizer.zero_grad()
+            opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm(self.parameters(), 0.25)
-            optimizer.step()
+            #nn.utils.clip_grad_norm(self.parameters(), 0.25)
+            opt.step()
             total_loss += loss.data
             if t % log_interval == 0 and t > 0:
                 cur_loss = total_loss[0] / log_interval
                 elapsed = time.time() - start_time
-                print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.4} '
+                print('| epoch {:3d} | {:5d}/{:5d} batches '
                       '| ms/batch {:5.2f} | loss {:5.2f} | ppl {:8.2f}'.format(
-                    self.epochs, t, int(len(loader) / (bptt * batch_size)), lr,
+                    self.epochs, t, int(len(loader) / (bptt * batch_size)), 
                     elapsed * 1000 / log_interval, cur_loss, math.exp(cur_loss)))
                 total_loss = 0
                 start_time = time.time()
-        self.epochs += 1
+        print('LRLRLRLRL', opt.param_groups[0]['lr'])
 
-    def evaluate(self, criterion, loader, bptt, batch_size):
+    def evaluate_____(self, criterion, loader, bptt, batch_size):
         self.eval()
         total_loss = 0
         ntokens = len(loader.vocabulary)
@@ -101,23 +103,23 @@ class lm(nn.Module):
 
     def train_model(self, path, train, valid=None, 
                     epochs=10, batch_size=16, bptt=35, lr=0.01, log_interval=50):
-        optimizer = opt.SGD(self.parameters(), 
-            lr=lr, momentum=0.9, weight_decay=0.001)
+        msg = '| end epoch {:3d} | time {:5.2f}s | val-loss {:5.2f} | val-ppl {:8.2f} |'
+        opt = optim.SGD(self.parameters(), lr=lr, momentum=0.8)
+        lr_sched = optim.lr_scheduler.LambdaLR(opt, lr_lambda=[lambda x: 0.9 ** x])
         criterion = nn.CrossEntropyLoss()
         best_val_loss = None
         try:
             print('train model:\n', self)
             for epoch in range(1, epochs + 1):
                 epoch_start_time = time.time()
-                self.epoch(optimizer, criterion, train, 
-                           log_interval, bptt, batch_size, lr)
+                self.epoch(opt, criterion, train, log_interval, bptt, batch_size)
+                lr_sched.step(epoch)
                 if valid:
-                    val_loss = self.evaluate(criterion, valid, bptt, batch_size)
+                    val_loss = self.evaluate_____(criterion, valid, bptt, batch_size)
+                    val_ppl = math.exp(val_loss)
+                    elapsed = (time.time() - epoch_start_time)
                     print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s '
-                          '| valid loss {:5.2f} | valid ppl {:8.2f}'.format(
-                            self.epochs, (time.time() - epoch_start_time), 
-                            val_loss, math.exp(val_loss)))
+                    print(msg.format(self.epochs, elapsed, val_loss, val_ppl))
                     print('-' * 89)
                     if not best_val_loss or val_loss < best_val_loss:
                         with open(path, 'wb') as f:
@@ -126,7 +128,28 @@ class lm(nn.Module):
                     #else
                     #    # Anneal the learning rate if no improvement has been seen in the validation dataset
                     #    lr /= 4.0
+                else:
+                    with open(path, 'wb') as f:
+                        torch.save(self, f)
         except KeyboardInterrupt:
             print('-' * 89)
             print('Exiting from training early')
+
+    def score(self, sentence, n=35):
+        self.eval()
+        log_p = 0
+        words = []
+        for w in sentence:
+            words.append(w)
+            if len(words) > n:
+                words.pop(0)
+            i = Variable(torch.LongTensor([words]).t().cuda(), volatile=True)
+            h = self.init_hidden(1)
+            o, h = self(i, h)
+            log_probs = F.log_softmax(o, dim=0)
+            log_p += log_probs.data[-1, w]
+        return log_p
+
+
+
 
