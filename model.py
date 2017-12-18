@@ -10,8 +10,7 @@ import pdb
 
 class lm(nn.Module):
 
-    def init_weights(self):
-        init_range = 0.1
+    def init_weights(self, init_range=0.1):
         self.encoder.weight.data.uniform_(-init_range, init_range)
         self.decoder.weight.data.uniform_(-init_range, init_range)
         self.decoder.bias.data.fill_(0)
@@ -43,7 +42,6 @@ class lm(nn.Module):
         self.n_hidden = n_hidden
         self.n_layers = n_layers
         self.p_drop = p_drop
-        self.drop = nn.Dropout(self.p_drop)
         self.encoder = nn.Embedding(self.n_vocab, self.d_embed)
         if self.rnn_type in ('LSTM', 'GRU'):
             rnn_cls = getattr(nn, self.rnn_type)
@@ -51,18 +49,33 @@ class lm(nn.Module):
                                dropout=self.p_drop)
         self.decoder = nn.Linear(self.n_hidden, self.n_vocab)
         self.init_weights()
-        #self.rnn.flatten_parameters()
         self.epochs = 0
 
     def forward(self, i, hidden):
-        embedded = self.drop(self.encoder(i))
-        #embedded = self.encoder(i)
+        embedded = self.encoder(i)
         output, hidden = self.rnn(embedded, hidden)
-        #output = self.drop(output) # WHY WAS THIS HERE??
         osize = output.size(0) * output.size(1)
         decoded = self.decoder(output.view(osize, output.size(2)))
-        #self.rnn.flatten_parameters()
         return decoded.view(osize, decoded.size(1)), hidden
+
+    def score(self, sentence, n=35):
+        self.eval()
+        log_p = 0
+        words = []
+        h = self.init_hidden(1)
+        for w in sentence:
+            words.append(w)
+            if len(words) > n:
+                words.pop(0)
+            i = Variable(torch.LongTensor([words]).t().cuda(), volatile=True)
+            o, h = self(i, h)
+            log_probs = F.log_softmax(o, dim=0)
+            log_p += log_probs.data[-1, w]
+        return log_p
+
+
+
+
 
     def epoch(self, opt, criterion, loader, log_interval, bptt, batch_size=16):
         self.train()
@@ -72,7 +85,10 @@ class lm(nn.Module):
         ntokens = len(loader.vocabulary)
         h = self.init_hidden(batch_size)
         for t, (i, g) in enumerate(loader.stream(bptt, batch_size)):
-            #train.translate(i, g)
+
+            #loader.translate(i, g)
+            #pdb.set_trace()
+
             o, h = self(i, self.repackage_hidden(h))
             loss = criterion(o.view(-1, ntokens), g)
             opt.zero_grad()
@@ -91,7 +107,7 @@ class lm(nn.Module):
                 start_time = time.time()
         print('LRLRLRLRL', opt.param_groups[0]['lr'])
 
-    def evaluate_____(self, criterion, loader, bptt, batch_size):
+    def evaluate(self, criterion, loader, bptt, batch_size):
         self.eval()
         total_loss = 0
         ntokens = len(loader.vocabulary)
@@ -115,7 +131,7 @@ class lm(nn.Module):
                 self.epoch(opt, criterion, train, log_interval, bptt, batch_size)
                 lr_sched.step(epoch)
                 if valid:
-                    val_loss = self.evaluate_____(criterion, valid, bptt, batch_size)
+                    val_loss = self.evaluate(criterion, valid, bptt, batch_size)
                     val_ppl = math.exp(val_loss)
                     elapsed = (time.time() - epoch_start_time)
                     print('-' * 89)
@@ -135,20 +151,6 @@ class lm(nn.Module):
             print('-' * 89)
             print('Exiting from training early')
 
-    def score(self, sentence, n=35):
-        self.eval()
-        log_p = 0
-        words = []
-        for w in sentence:
-            words.append(w)
-            if len(words) > n:
-                words.pop(0)
-            i = Variable(torch.LongTensor([words]).t().cuda(), volatile=True)
-            h = self.init_hidden(1)
-            o, h = self(i, h)
-            log_probs = F.log_softmax(o, dim=0)
-            log_p += log_probs.data[-1, w]
-        return log_p
 
 
 

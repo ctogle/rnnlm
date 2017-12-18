@@ -72,7 +72,7 @@ class corpus:
         print('corpus "%s" | %d lines | %d tokens | %d token vocabulary' % info)
 
     def __iter__(self):
-        '''yield the tokens of the corpus with eos tokens between lines'''
+        '''yield the tokens of the corpus with bos/eos tokens between lines'''
         for line in self.read():
             yield self.vocabulary.bos
             for word in line.split():
@@ -111,30 +111,8 @@ class loader(corpus):
             seq_len = min(n, len(source) - 1 - t)
             i = Variable(source[t:t + seq_len], volatile=evaluation)
             o = Variable(source[t + 1:t + 1 + seq_len].view(-1))
-            yield i, o
 
-    def stream2(self, evaluation=True, cuda=True):
-        for t, index in enumerate(self):
-            if index == self.vocabulary.bos:
-                sentence = [index]
-            elif index == self.vocabulary.eos:
-                sentence.append(index)
-                sentence = torch.LongTensor(sentence)
-                yield sentence
-            else:
-                sentence.append(index)
+            #self.translate(i, o)
+            #pdb.set_trace()
 
-
-        source = torch.LongTensor(len(self))
-        for t, index in enumerate(self):
-            source[t] = index
-        self.batch_count = source.size(0) // batch_size
-        source = source.narrow(0, 0, self.batch_count * batch_size)
-        source = source.view(batch_size, -1).t().contiguous()
-        if cuda:
-            source = source.cuda()
-        for t in range(0, source.size(0) - 1, n):
-            seq_len = min(n, len(source) - 1 - t)
-            i = Variable(source[t:t + seq_len], volatile=evaluation)
-            o = Variable(source[t + 1:t + 1 + seq_len].view(-1))
             yield i, o
