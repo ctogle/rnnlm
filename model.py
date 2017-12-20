@@ -49,43 +49,45 @@ class lm(nn.Module):
             self.rnn = rnn_cls(self.d_embed, self.d_hidden, self.n_layers, 
                                dropout=self.p_drop)
         self.projection = nn.Linear(self.d_hidden, self.n_vocab)
-        self.decoder = nn.LogSoftmax(dim=None)
+        self.decoder = nn.LogSoftmax(dim=1)
 
         self.init_weights()
         self.epochs = 0
 
     def forward(self, i, h):
-        #        i : (bptt, batch_size)
+        #          i : (bptt, batch_size)
         e = self.encoder(i)
-        # embedded : (bptt, batch_size, d_embed)
+        #   embedded : (bptt, batch_size, d_embed)
         o, h = self.rnn(e, h)
-        #   output : (bptt, batch_size, d_hidden)
-        #   hidden : ((n_layers, batch_size, d_hidden), 
-        #             (n_layers, batch_size, d_hidden))
+        #     output : (bptt, batch_size, d_hidden)
+        #     hidden : ((n_layers, batch_size, d_hidden), 
+        #               (n_layers, batch_size, d_hidden))
         p = self.projection(o.view(o.size(0) * o.size(1), o.size(2)))
+        # projection : (bptt * batch_size, n_vocab)
+        d = self.decoder(p).view(o.size(0), o.size(1), p.size(1))
+        #    decoded : (bptt, batch_size, n_vocab)
+        return d, h
 
-        pdb.set_trace()
-
-        d = self.decoder(p)
-
-        pdb.set_trace()
-
-        return d.view(o.size(0) * o.size(1), d.size(1)), h
-
-    def score(self, sentence, n=35):
+    def score(self, sentence):#, n=35):
         self.eval()
         log_p = 0
         words = []
-        h = self.init_hidden(1)
         for w in sentence:
             words.append(w)
-            if len(words) > n:
-                words.pop(0)
+            #if len(words) > n:
+            #    words.pop(0)
             i = Variable(torch.LongTensor([words]).t().cuda(), volatile=True)
+            h = self.init_hidden(1)
             o, h = self(i, h)
-            log_probs = F.log_softmax(o, dim=0)
-            log_p += log_probs.data[-1, w]
-        return log_p
+            log_p += o.data[-1, 0, w]
+
+            #print('i', i.size())
+            #print('o', o.size())
+            #print('logp', log_p, o.data[-1, 0, w])
+
+            #log_p += o.data[0, 0, w]
+        #pdb.set_trace()
+        return log_p * 0.2
 
 
 
@@ -96,47 +98,43 @@ class lm(nn.Module):
         self.epochs += 1
         total_loss = 0
         start_time = time.time()
-        ntokens = len(loader.vocabulary)
+        lr = opt.param_groups[0]['lr']
         h = self.init_hidden(batch_size)
         for t, (i, g) in enumerate(loader.stream(bptt, batch_size)):
-
             #loader.translate(i, g)
-            #pdb.set_trace()
-
             o, h = self(i, self.repackage_hidden(h))
-            loss = criterion(o.view(-1, ntokens), g)
+            loss = criterion(o.view(-1, self.n_vocab), g)
             opt.zero_grad()
             loss.backward()
-            #nn.utils.clip_grad_norm(self.parameters(), 0.25)
+            nn.utils.clip_grad_norm(self.parameters(), 0.25)
             opt.step()
             total_loss += loss.data
             if t % log_interval == 0 and t > 0:
                 cur_loss = total_loss[0] / log_interval
                 elapsed = time.time() - start_time
-                print('| epoch {:3d} | {:5d}/{:5d} batches '
+                print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:5.2f} '
                       '| ms/batch {:5.2f} | loss {:5.2f} | ppl {:8.2f}'.format(
-                    self.epochs, t, int(len(loader) / (bptt * batch_size)), 
+                    self.epochs, t, int(len(loader) / (bptt * batch_size)), lr,
                     elapsed * 1000 / log_interval, cur_loss, math.exp(cur_loss)))
                 total_loss = 0
                 start_time = time.time()
-        print('LRLRLRLRL', opt.param_groups[0]['lr'])
 
     def evaluate(self, criterion, loader, bptt, batch_size):
         self.eval()
         total_loss = 0
-        ntokens = len(loader.vocabulary)
         h = self.init_hidden(batch_size)
         for t, (i, g) in enumerate(loader.stream(bptt, batch_size, evaluation=True)):
             o, h = self(i, self.repackage_hidden(h))
-            total_loss += len(i) * criterion(o.view(-1, ntokens), g).data
+            total_loss += len(i) * criterion(o.view(-1, self.n_vocab), g).data
         return total_loss[0] / (loader.batch_count * batch_size)
 
     def train_model(self, path, train, valid=None, 
                     epochs=10, batch_size=16, bptt=35, lr=0.01, log_interval=50):
         msg = '| end epoch {:3d} | time {:5.2f}s | val-loss {:5.2f} | val-ppl {:8.2f} |'
-        opt = optim.SGD(self.parameters(), lr=lr, momentum=0.8)
+        opt = optim.SGD(self.parameters(), lr=lr, momentum=0.9)
         lr_sched = optim.lr_scheduler.LambdaLR(opt, lr_lambda=[lambda x: 0.9 ** x])
-        criterion = nn.CrossEntropyLoss()
+        #criterion = nn.CrossEntropyLoss()
+        criterion = nn.NLLLoss()
         best_val_loss = None
         try:
             print('train model:\n', self)
@@ -145,7 +143,8 @@ class lm(nn.Module):
                 self.epoch(opt, criterion, train, log_interval, bptt, batch_size)
                 lr_sched.step(epoch)
                 if valid:
-                    val_loss = self.evaluate(criterion, valid, bptt, batch_size)
+                    val_criterion = nn.NLLLoss()
+                    val_loss = self.evaluate(val_criterion, valid, bptt, batch_size)
                     val_ppl = math.exp(val_loss)
                     elapsed = (time.time() - epoch_start_time)
                     print('-' * 89)

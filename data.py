@@ -111,8 +111,4 @@ class loader(corpus):
             seq_len = min(n, len(source) - 1 - t)
             i = Variable(source[t:t + seq_len], volatile=evaluation)
             o = Variable(source[t + 1:t + 1 + seq_len].view(-1))
-
-            #self.translate(i, o)
-            #pdb.set_trace()
-
             yield i, o
